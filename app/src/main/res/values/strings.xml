@@ -74,4 +74,17 @@
 
     <string name="id_fmt">User ID: %s</string>
     <string name="email_fmt">Email: %s</string>
+
+    <string-array name="state">
+        <item>Rajasthan</item>
+        <item>Punjab</item>
+    </string-array>
+
+    <string-array name="rajasthan">
+        <item>Jaipur</item>
+    </string-array>
+
+    <string-array name="punjab">
+        <item>Bhatinda</item>
+    </string-array>
 </resources>

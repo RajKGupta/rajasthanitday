@@ -1,5 +1,6 @@
 package govirtual360.numberverify;
 
+import android.content.Intent;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -11,6 +12,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.support.design.widget.Snackbar;
+import android.widget.Toast;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -22,21 +24,34 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.PhoneAuthCredential;
 import com.google.firebase.auth.PhoneAuthProvider;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.ValueEventListener;
+import com.google.firebase.iid.FirebaseInstanceId;
 
 import java.util.concurrent.TimeUnit;
+
+import govirtual360.numberverify.helper.MarshmallowPermissions;
+import govirtual360.numberverify.mainactitvities.MainActivity;
+import govirtual360.numberverify.mainactitvities.ProfileActivity;
+import govirtual360.numberverify.service.model.PersonalDetails;
+import govirtual360.numberverify.service.model.SharedPreference;
+
+import static govirtual360.numberverify.Farmer.DBREF;
+import static govirtual360.numberverify.Farmer.users;
 
 public class PhoneAuthActivity extends AppCompatActivity implements
         View.OnClickListener {
     private static final String TAG = "PhoneAuthActivity";
-
     private static final String KEY_VERIFY_IN_PROGRESS = "key_verify_in_progress";
-
     private static final int STATE_INITIALIZED = 1;
     private static final int STATE_CODE_SENT = 2;
     private static final int STATE_VERIFY_FAILED = 3;
     private static final int STATE_VERIFY_SUCCESS = 4;
     private static final int STATE_SIGNIN_FAILED = 5;
     private static final int STATE_SIGNIN_SUCCESS = 6;
+    private static String validPhone;
+    private SharedPreference session;
 
     // [START declare_auth]
     private FirebaseAuth mAuth;
@@ -60,27 +75,40 @@ public class PhoneAuthActivity extends AppCompatActivity implements
     private Button mVerifyButton;
     private Button mResendButton;
     private Button mSignOutButton;
+    private MarshmallowPermissions marshmallowPermissions;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_phone_auth);
+        marshmallowPermissions =new MarshmallowPermissions(this);
+        if(!marshmallowPermissions.checkPermissionForExternalStorage())
+            marshmallowPermissions.requestPermissionForExternalStorage();
+        if(!marshmallowPermissions.checkPermissionForCamera())
+            marshmallowPermissions.requestPermissionForCamera();
+        if(!marshmallowPermissions.checkPermissionForReadExternalStorage())
+            marshmallowPermissions.requestPermissionForReadExternalStorage();
+
         if (savedInstanceState != null) {
             onRestoreInstanceState(savedInstanceState);
         }
+        session = new SharedPreference(this);
+        if (FirebaseInstanceId.getInstance().getToken() != null) {
+            session.setFCMavail(FirebaseInstanceId.getInstance().getToken());
+        }
 
-        mPhoneNumberViews = findViewById(R.id.phone_auth_fields);
-        mSignedInViews = findViewById(R.id.signed_in_buttons);
+        mPhoneNumberViews = (ViewGroup) findViewById(R.id.phone_auth_fields);
+        mSignedInViews = (ViewGroup) findViewById(R.id.signed_in_buttons);
 
-        mStatusText = findViewById(R.id.status);
-        mDetailText = findViewById(R.id.detail);
+        mStatusText = (TextView) findViewById(R.id.status);
+        mDetailText = (TextView) findViewById(R.id.detail);
 
-        mPhoneNumberField = findViewById(R.id.field_phone_number);
-        mVerificationField = findViewById(R.id.field_verification_code);
+        mPhoneNumberField = (EditText)findViewById(R.id.field_phone_number);
+        mVerificationField = (EditText) findViewById(R.id.field_verification_code);
 
-        mStartButton = findViewById(R.id.button_start_verification);
-        mVerifyButton = findViewById(R.id.button_verify_phone);
-        mResendButton = findViewById(R.id.button_resend);
-        mSignOutButton = findViewById(R.id.sign_out_button);
+        mStartButton = (Button) findViewById(R.id.button_start_verification);
+        mVerifyButton = (Button)findViewById(R.id.button_verify_phone);
+        mResendButton = (Button) findViewById(R.id.button_resend);
+        mSignOutButton = (Button) findViewById(R.id.sign_out_button);
 
         // Assign click listeners
         mStartButton.setOnClickListener(this);
@@ -187,6 +215,7 @@ public class PhoneAuthActivity extends AppCompatActivity implements
     }
     private void startPhoneNumberVerification(String phoneNumber) {
         // [START start_phone_auth]
+        validPhone=phoneNumber;
         PhoneAuthProvider.getInstance().verifyPhoneNumber(
                 phoneNumber,        // Phone number to verify
                 60,                 // Timeout duration
@@ -205,6 +234,7 @@ public class PhoneAuthActivity extends AppCompatActivity implements
     }
     private void resendVerificationCode(String phoneNumber,
                                         PhoneAuthProvider.ForceResendingToken token) {
+        validPhone = phoneNumber;
         PhoneAuthProvider.getInstance().verifyPhoneNumber(
                 phoneNumber,        // Phone number to verify
                 60,                 // Timeout duration
@@ -268,7 +298,7 @@ public class PhoneAuthActivity extends AppCompatActivity implements
         updateUI(uiState, null, cred);
     }
 
-    private void updateUI(int uiState, FirebaseUser user, PhoneAuthCredential cred) {
+    private void updateUI(int uiState, final FirebaseUser user, PhoneAuthCredential cred) {
         switch (uiState) {
             case STATE_INITIALIZED:
                 // Initialized state, show only the phone number field and start button
@@ -321,6 +351,30 @@ public class PhoneAuthActivity extends AppCompatActivity implements
             mStatusText.setText(R.string.signed_out);
         } else {
             // Signed in
+            //TODO take to new screen
+            DBREF.child(users).child(user.getUid()).addListenerForSingleValueEvent(new ValueEventListener() {
+                @Override
+                public void onDataChange(DataSnapshot dataSnapshot) {
+                    if(dataSnapshot.exists())
+                    {
+                        PersonalDetails user = dataSnapshot.getValue(PersonalDetails.class);
+                        session.setSharedPreference(user.getName(),user.getPhone(),user.getUID(),user.getLandArea(),user.getDistrict(),user.getState());
+                        setFirebaseToken(true);
+
+                    }
+                    else
+                    {
+                        session.setUID(user.getUid());
+                        session.setPhone(validPhone);
+                        setFirebaseToken(false);
+                    }
+                }
+
+                @Override
+                public void onCancelled(DatabaseError databaseError) {
+
+                }
+            });
             mPhoneNumberViews.setVisibility(View.GONE);
             mSignedInViews.setVisibility(View.VISIBLE);
 
@@ -379,4 +433,28 @@ public class PhoneAuthActivity extends AppCompatActivity implements
                 break;
         }
     }
+    private void setFirebaseToken(Boolean dataexists) {
+        String myFCMToken;
+        if (FirebaseInstanceId.getInstance().getToken() == null)
+            myFCMToken = session.getFCMavail();
+
+        else
+            myFCMToken = FirebaseInstanceId.getInstance().getToken();
+
+        if (myFCMToken != null)
+        {
+            session.setFCMavail(myFCMToken);
+            if (dataexists) {
+                Intent intent = new Intent(this, MainActivity.class);
+                startActivity(intent);
+                finish();
+            } else {
+                Intent intent = new Intent(this, ProfileActivity.class);
+                startActivity(intent);
+                finish();
+            }
+        } else
+            Toast.makeText(PhoneAuthActivity.this, "You will need to clear the app data or reinstall the app to make it work properly", Toast.LENGTH_LONG).show();
+    }
+
 }
